@@ -1,6 +1,7 @@
 import numpy as np
 import re, copy
 import random
+import matplotlib.pyplot as plt
 
 class BNode:
     def __init__(self, label):
@@ -33,8 +34,10 @@ class BNode:
     def prob(self, feed_dict):
         return self.cpt[self.vec_hash(feed_dict)]
     def get_CPT(self, seq):
+        # seq is a state of the whole graph
         feed_dict = {}
         for c in self.conditions:
+            assert seq
             feed_dict[c] = seq[c]
         return self.prob(feed_dict)
 
@@ -178,6 +181,7 @@ class Solution:
             if val == 0:
                 queue.append(key)
 
+
         record = []
         while queue:
             label = queue.pop(0)
@@ -252,7 +256,7 @@ class Solution:
                 w_tot[row, seq[var]] += w
         w_tot = w_tot / np.sum(w_tot, 1)[:, None]
 
-        return w_tot
+        return w_tot[0]
 
     def weighted_sample(self, feed_dict):
         w = 1
@@ -292,15 +296,23 @@ class Solution:
         for x in self.bn_graph.keys():
             if feed_dict and x in feed_dict:
                 seq[x] = feed_dict[x]
-                nevidence_vars.append(x)
             else:
+                nevidence_vars.append(x)
                 seq[x] = 1 if random.random() > 0.5 else 0
         w_tot = np.zeros(2)
         # 0:~var 1: var
 
+        print('feed_dict', feed_dict)
+        print('nevidence_vars:', nevidence_vars)
+        print('init_seq', seq)
+        print(seq.keys())
+
         for n in range(N):
             for var in nevidence_vars:
-                seq[var] = 1 if random.random() < self.mb_prob(var, seq) else 0
+                p = self.mb_prob(var, seq)
+                sample = 1 if random.random() < self.mb_prob(var, seq) else 0
+                seq[var] = sample
+                # print('one sample', sample)
                 w_tot[seq[qvar]] += 1
 
         return w_tot/np.sum(w_tot)
@@ -315,18 +327,20 @@ class Solution:
         prob = prob_qnode
         dual_prob = 1 - prob_qnode
 
-        seq_cp = copy.copy(seq)
-        seq_cp[var] = 0 # set Var = ~var for the dual_prob
+        seq_cp1 = copy.copy(seq)
+        seq_cp1[var] = 0 # set Var = ~var for the dual_prob
         seq_cp2 = copy.copy(seq)
         seq_cp2[var] = 1
+
         for child in node.back_list:
             cnode = self.bn_graph[child]
-            prob *= cnode.get_CPT(seq_cp)
+            prob *= cnode.get_CPT(seq_cp1)
             dual_prob *= cnode.get_CPT(seq_cp2)
-        print(prob, dual_prob)
+        # print('pair prob: ',prob, dual_prob)
 
         weight = np.array([prob, dual_prob])
-        return weight /np.sum(weight)
+        weight = weight /np.sum(weight)
+        return weight[0]
 
     # def var_elim(self, node=None, evidence=None):
     #     factors = None
@@ -374,17 +388,45 @@ def main():
     record = sol.BFS_rev(sol.read_label)
     print(record)
 
-    # test likelihood weighting
-    qvar = 'g'
-    feed_dict = {'k': 1, 'b':0, 'c':1}
-    prob = sol.likelihood_weighting(qvar, feed_dict, 10)
-    print(prob)
+    for i in range(10):
+        # test likelihood weighting
+        qvar = 'g'
+        feed_dict = {'k': 1, 'b': 0, 'c': 1}
+        prob = sol.likelihood_weighting(qvar, feed_dict, 10000)
+        print(prob)
 
-    # test gibbs likelihood
-    qvar = 'g'
-    feed_dict = {'k': 1, 'b':0, 'c':1}
-    prob = sol.Gibbs_sampling(qvar, feed_dict, 10)
-    print(prob)
+
+        # test gibbs likelihood
+        qvar = 'g'
+        feed_dict = {'k': 1, 'b': 0, 'c': 1}
+        prob = sol.Gibbs_sampling(qvar, feed_dict, 10000)
+        print(prob)
+
+        print('____________________________________')
+
+    # ntot = 5
+    # prob_LW = np.zeros(ntot)
+    # prob_Gibbs = np.zeros(ntot)
+    # for n in range(ntot):
+    #     Ntot = 10**n
+    #     print('Ntot=', Ntot)
+    #     # test likelihood weighting
+    #     qvar = 'g'
+    #     feed_dict = {'k': 1, 'b':0, 'c':1}
+    #     prob = sol.likelihood_weighting(qvar, feed_dict, Ntot)
+    #     print(prob)
+    #     prob_LW[n] = prob[0]
+    #
+    #     # test gibbs likelihood
+    #     qvar = 'g'
+    #     feed_dict = {'k': 1, 'b':0, 'c':1}
+    #     prob = sol.Gibbs_sampling(qvar, feed_dict, Ntot)
+    #     print(prob)
+    #     prob_Gibbs[n] = prob[1]
+    #
+    # plt.plot(np.arange(ntot), prob_LW, prob_Gibbs)
+    # plt.show()
+
 
 
 
