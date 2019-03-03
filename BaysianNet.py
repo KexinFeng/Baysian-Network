@@ -36,10 +36,13 @@ class BNode:
     def get_CPT(self, seq):
         # seq is a state of the whole graph
         feed_dict = {}
+        query = self.label
         for c in self.conditions:
-            assert seq
+            assert c in seq # error: not given enough condition
             feed_dict[c] = seq[c]
-        return self.prob(feed_dict)
+
+        default_prob = self.prob(feed_dict)
+        return default_prob if seq[query] else 1 - default_prob
 
 
     def tensor_rep(self, evidence = None):
@@ -67,9 +70,10 @@ class BNode:
 
         logic = {}
         index = [0]
-        # recursively find the leaves, store the logic and index along
-        # logic is for reading cpt, index is for indexing factor
+
         self.traverse_Ltree(self.conditions, factor, evidence, logic, index)
+        # Recursively find the leaves, store the logic and index along the way.
+        # logic is for reading cpt, index is for indexing factor
 
         factor[1] = 1 - factor[0]
 
@@ -126,7 +130,6 @@ class Solution:
                 terms = line.split()
                 if len(terms) == 0:
                     continue
-
                 prob = float(terms[2])
                 tmp = re.split('\||\(|,|\)', terms[0])
                 node = tmp[1]
@@ -136,6 +139,23 @@ class Solution:
                 self.build_graph_dynamic(node, dict, prob)
 
             self.BFS(self.build_back_list)
+
+    def readInput(self, term):
+        # P(g|a,~b,~c)
+        # terms = line.split()
+        if len(term) == 0:
+            return
+        # prob = float(terms[2])
+        tmp = re.split('\||\(|,|\)', term)
+        q_var = tmp[1]
+        conditions = tmp[2:-1]
+        dict = self.build_dict(conditions)
+
+        qvar = q_var[-1]
+        feed_dict = dict
+        dual = 1 if len(q_var) == 1 else 0
+        return qvar, feed_dict, dual
+
 
     def build_back_list(self, node):
         for child in node.conditions:
@@ -251,9 +271,10 @@ class Solution:
 
         for n in range(N):
             seq, w = self.weighted_sample(feed_dict)
-            for row, var in enumerate(qvar):
+            for row, qv in enumerate(qvar):
                 # [row, 0/1] ~var: 0, var: 1
-                w_tot[row, seq[var]] += w
+                w_tot[row, seq[qv]] += w
+            # print('one_sample', seq[qvar])
         w_tot = w_tot / np.sum(w_tot, 1)[:, None]
 
         return w_tot[0]
@@ -302,45 +323,78 @@ class Solution:
         w_tot = np.zeros(2)
         # 0:~var 1: var
 
-        print('feed_dict', feed_dict)
-        print('nevidence_vars:', nevidence_vars)
-        print('init_seq', seq)
-        print(seq.keys())
+        # print('feed_dict', feed_dict)
+        # print('nevidence_vars:', nevidence_vars)
+        # print('init_seq', seq)
+        # print(seq.keys())
 
+        pmean = []
         for n in range(N):
             for var in nevidence_vars:
                 p = self.mb_prob(var, seq)
-                sample = 1 if random.random() < self.mb_prob(var, seq) else 0
+                if var == qvar:
+                    # print('p=', p)
+                    pmean.append(p)
+                    # equivalent to a FUZZY sample!
+
+                    # print_dict(seq)
+                    # print(p)
+                    # print('~~~~~~~~~~~~~~~~~~~~~')
+
+                sample = 1 if random.random() < p else 0
                 seq[var] = sample
                 # print('one sample', sample)
                 w_tot[seq[qvar]] += 1
+            # print('seq[qvar]:', seq[qvar])
+                # print(w_tot)
 
-        return w_tot/np.sum(w_tot)
+        return w_tot/np.sum(w_tot), np.mean(pmean)
 
-    def mb_prob(self, var, seq):
+    def mb_prob(self, var, seq, test=0):
         weight = np.zeros(2)
         # 0: ~var 1: var
 
-        node = self.bn_graph[var]
-        prob_qnode = node.get_CPT(seq)
-
-        prob = prob_qnode
-        dual_prob = 1 - prob_qnode
-
         seq_cp1 = copy.copy(seq)
-        seq_cp1[var] = 0 # set Var = ~var for the dual_prob
+        seq_cp1[var] = 1  # var
         seq_cp2 = copy.copy(seq)
-        seq_cp2[var] = 1
+        seq_cp2[var] = 0  # ~var
+
+        node = self.bn_graph[var]
+        # prob_qnode = node.get_CPT(seq)
+
+        prob = node.get_CPT(seq_cp1) # var
+        dual_prob = 1 - prob # ~var
+        assert dual_prob == node.get_CPT(seq_cp2)
+        if test:
+            print(dual_prob, prob)
+            # print('seq1:',seq_cp1)
+            # print('seq2:',seq_cp2)
+
 
         for child in node.back_list:
             cnode = self.bn_graph[child]
-            prob *= cnode.get_CPT(seq_cp1)
-            dual_prob *= cnode.get_CPT(seq_cp2)
-        # print('pair prob: ',prob, dual_prob)
+            ptmp = cnode.get_CPT(seq_cp1)
+            prob *= ptmp
 
-        weight = np.array([prob, dual_prob])
+            dptmp = cnode.get_CPT(seq_cp2)
+            dual_prob *= dptmp
+            # print('pair prob: ',prob, dual_prob)
+            if test:
+                print(dptmp, ptmp)
+
+        # prob = prob_qnode
+        # for child in node.back_list:
+        #     cnode = self.bn_graph[child]
+        #     default_prob = cnode.get_CPT(seq)
+
+
+
+        weight = np.array([dual_prob, prob])
         weight = weight /np.sum(weight)
-        return weight[0]
+
+        if test:
+            print('weight=', weight)
+        return weight[1]
 
     # def var_elim(self, node=None, evidence=None):
     #     factors = None
@@ -366,65 +420,90 @@ class Solution:
     def sum_out(var, factors):
         return 0
 
-
-
-
-
+def print_dict(seq):
+    str = ''
+    for key, val in seq.items():
+        if not val:
+            str = str + '~'
+        str = str + key
+    print(str)
 
 def main():
     print('hello world')
     random.seed(10)
 
+    input = 'P(d|c,~d,e,~f)'
+    input = 'P(~f|~a,~b,~c,~d,~e,~g,i)'
+
+    # Initialize
     sol = Solution()
     file = "prob345.txt"
     sol.readData(file)
+
+    # read input
+    qvar, feed_dict, dual = sol.readInput(input)
+    # input: P(d|~a,~b,~d,~c,e,g)
+    # qvar = 'd'
+    # feed_dict = {'b':0,'a':0,'e': 0,'g': 0,'c':0,'d':0}
+    print(qvar)
+    print(feed_dict)
+
     # # test graph building
-    sol.BFS(sol.print_node)
-    #
+    # sol.BFS(sol.print_node)
+
     # # test topological order
     record = sol.BFS(sol.read_label)
     print(record)
-
     record = sol.BFS_rev(sol.read_label)
     print(record)
 
-    for i in range(10):
+    # test mb_prob
+    print('#test mb_prob')
+    # qvar = 'd'
+    # feed_dict = {'b':0,'a':0,'e': 0,'g': 0,'c':0,'d':0}
+    print(qvar)
+    print(feed_dict)
+    sol.mb_prob(qvar, feed_dict, test=1)
+    print('P('+qvar+'|mb)', sol.mb_prob(qvar, feed_dict, test=1))
+    print('____________________________________')
+
+    # test application
+    # qvar = 'g'
+    # feed_dict = {'c': 1, 'd': 0, 'e': 1, 'f':0}
+    for i in range(1):
         # test likelihood weighting
-        qvar = 'g'
-        feed_dict = {'k': 1, 'b': 0, 'c': 1}
         prob = sol.likelihood_weighting(qvar, feed_dict, 10000)
         print(prob)
 
-
-        # test gibbs likelihood
-        qvar = 'g'
-        feed_dict = {'k': 1, 'b': 0, 'c': 1}
-        prob = sol.Gibbs_sampling(qvar, feed_dict, 10000)
+        # test gibbs
+        prob,_ = sol.Gibbs_sampling(qvar, feed_dict, 10000)
         print(prob)
 
         print('____________________________________')
 
-    # ntot = 5
+
+    # # Plot convergence
+    # ntot = 4 # ntot_critical = 10**4: err ~ 0.005
     # prob_LW = np.zeros(ntot)
     # prob_Gibbs = np.zeros(ntot)
-    # for n in range(ntot):
+    #
+    # qvar = 'g'
+    # feed_dict = {'k': 1, 'b': 0, 'c': 1}
+    # for n in range(ntot + 1):
     #     Ntot = 10**n
     #     print('Ntot=', Ntot)
+    #
     #     # test likelihood weighting
-    #     qvar = 'g'
-    #     feed_dict = {'k': 1, 'b':0, 'c':1}
     #     prob = sol.likelihood_weighting(qvar, feed_dict, Ntot)
     #     print(prob)
-    #     prob_LW[n] = prob[0]
+    #     prob_LW[n] = prob[1]
     #
     #     # test gibbs likelihood
-    #     qvar = 'g'
-    #     feed_dict = {'k': 1, 'b':0, 'c':1}
-    #     prob = sol.Gibbs_sampling(qvar, feed_dict, Ntot)
+    #     prob,_ = sol.Gibbs_sampling(qvar, feed_dict, Ntot)
     #     print(prob)
     #     prob_Gibbs[n] = prob[1]
     #
-    # plt.plot(np.arange(ntot), prob_LW, prob_Gibbs)
+    # plt.plot(np.arange(ntot + 1), prob_LW, prob_Gibbs)
     # plt.show()
 
 
